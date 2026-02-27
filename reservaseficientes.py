@@ -50,7 +50,6 @@ def extraer_datos_reserva_dinamico(fecha):
     headers = {'User-Agent': 'Mozilla/5.0'}
     df_raw = None
     
-    # Descarga del archivo y lectura de la hoja asignada
     for url, hoja_esperada in urls:
         try:
             res = requests.get(url, headers=headers, timeout=20)
@@ -126,7 +125,6 @@ def extraer_datos_reserva_dinamico(fecha):
     return df_datos, mensajes_alerta
 
 def procesar_rango_fechas(start_date, end_date, progress_bar, status_text):
-    """Itera con progreso visual sobre el rango de fechas."""
     fechas = pd.date_range(start_date, end_date)
     total_dias = len(fechas)
     lista_dfs = []
@@ -144,59 +142,65 @@ def procesar_rango_fechas(start_date, end_date, progress_bar, status_text):
         progress_bar.progress((i + 1) / total_dias)
             
     if lista_dfs:
-        return pd.concat(lista_dfs, ignore_index=True), alertas_globales
+        df_consolidado = pd.concat(lista_dfs, ignore_index=True)
+        # Forzamos la existencia de las 3 columnas para que la interfaz nunca se rompa ni desaparezcan los KPIs
+        for col in ['Reserva Fría', 'Reserva Eficiente', 'Mantenimiento']:
+            if col not in df_consolidado.columns:
+                df_consolidado[col] = np.nan
+        return df_consolidado, alertas_globales
     return None, alertas_globales
 
 # --- FUNCIONES DE GRÁFICA Y MÉTRICAS ---
 def trazar_tendencia_con_estadisticas(fig, df, columna, color_hex):
-    if columna not in df.columns or df[columna].isna().all():
-        return 
-        
+    # Se añade la traza siempre. Si la data es toda NaN, plotly dibuja el cuadro de leyenda y una gráfica vacía.
     fig.add_trace(go.Scatter(x=df['Fecha_Hora'], y=df[columna], mode='lines', name=columna, line=dict(color=color_hex, width=2), connectgaps=False))
     
-    promedio = df[columna].mean()
-    if pd.notna(promedio):
+    # Solo calculamos promedios y máximos si la columna tiene al menos un dato válido
+    if not df[columna].isna().all():
+        promedio = df[columna].mean()
         fig.add_hline(y=promedio, line_dash="dash", line_color=color_hex, 
                       annotation_text=f"Promedio: {promedio:.1f}", annotation_position="top left")
-    
-    max_idx = df[columna].idxmax()
-    if pd.notna(max_idx):
-        max_val = df.loc[max_idx, columna]
-        max_time = df.loc[max_idx, 'Fecha_Hora']
-        fig.add_trace(go.Scatter(x=[max_time], y=[max_val], mode='markers+text', 
-                                 marker=dict(color=color_hex, size=12, symbol='triangle-up', line=dict(color='black', width=1)), 
-                                 text=[f"Máx: {max_val:.1f}"], textposition="top center", showlegend=False))
-    
-    min_idx = df[columna].idxmin()
-    if pd.notna(min_idx):
-        min_val = df.loc[min_idx, columna]
-        min_time = df.loc[min_idx, 'Fecha_Hora']
-        fig.add_trace(go.Scatter(x=[min_time], y=[min_val], mode='markers+text', 
-                                 marker=dict(color=color_hex, size=12, symbol='triangle-down', line=dict(color='black', width=1)), 
-                                 text=[f"Mín: {min_val:.1f}"], textposition="bottom center", showlegend=False))
+        
+        max_idx = df[columna].idxmax()
+        if pd.notna(max_idx):
+            max_val = df.loc[max_idx, columna]
+            max_time = df.loc[max_idx, 'Fecha_Hora']
+            fig.add_trace(go.Scatter(x=[max_time], y=[max_val], mode='markers+text', 
+                                     marker=dict(color=color_hex, size=12, symbol='triangle-up', line=dict(color='black', width=1)), 
+                                     text=[f"Máx: {max_val:.1f}"], textposition="top center", showlegend=False))
+        
+        min_idx = df[columna].idxmin()
+        if pd.notna(min_idx):
+            min_val = df.loc[min_idx, columna]
+            min_time = df.loc[min_idx, 'Fecha_Hora']
+            fig.add_trace(go.Scatter(x=[min_time], y=[min_val], mode='markers+text', 
+                                     marker=dict(color=color_hex, size=12, symbol='triangle-down', line=dict(color='black', width=1)), 
+                                     text=[f"Mín: {min_val:.1f}"], textposition="bottom center", showlegend=False))
 
-def generar_fila_kpis(df, columna):
+def generar_fila_kpis(df, columna, color_alerta_inversa=False):
     st.markdown(f"**🔹 {columna}**")
     
     if df[columna].isna().all():
-        st.info("ℹ️ Parámetro no reportado (vacío) en este intervalo de tiempo.")
-        st.markdown("---")
-        return
-
-    promedio = df[columna].mean()
-    max_idx = df[columna].idxmax()
-    max_val = df.loc[max_idx, columna] if pd.notna(max_idx) else np.nan
-    hora_max = df.loc[max_idx, "Fecha_Hora"].strftime("%d/%m/%Y %H:%M") if pd.notna(max_idx) else "-"
-    
-    min_idx = df[columna].idxmin()
-    min_val = df.loc[min_idx, columna] if pd.notna(min_idx) else np.nan
-    hora_min = df.loc[min_idx, "Fecha_Hora"].strftime("%d/%m/%Y %H:%M") if pd.notna(min_idx) else "-"
+        promedio, max_val, min_val = np.nan, np.nan, np.nan
+        hora_max, hora_min = "-", "-"
+    else:
+        promedio = df[columna].mean()
+        max_idx = df[columna].idxmax()
+        max_val = df.loc[max_idx, columna] if pd.notna(max_idx) else np.nan
+        hora_max = df.loc[max_idx, "Fecha_Hora"].strftime("%d/%m/%Y %H:%M") if pd.notna(max_idx) else "-"
+        
+        min_idx = df[columna].idxmin()
+        min_val = df.loc[min_idx, columna] if pd.notna(min_idx) else np.nan
+        hora_min = df.loc[min_idx, "Fecha_Hora"].strftime("%d/%m/%Y %H:%M") if pd.notna(min_idx) else "-"
     
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Promedio en el Rango", f"{promedio:.1f} MW" if pd.notna(promedio) else "NaN")
     
-    kpi2.metric("Pico MÁXIMO", f"{max_val:.1f} MW" if pd.notna(max_val) else "NaN", f"↑ Fecha y Hora: {hora_max}", delta_color="normal")
-    kpi3.metric("Valle MÍNIMO", f"{min_val:.1f} MW" if pd.notna(min_val) else "NaN", f"↓ Fecha y Hora: {hora_min}", delta_color="normal")
+    color_max = "inverse" if color_alerta_inversa else "normal"
+    color_min = "normal" if color_alerta_inversa else "inverse"
+    
+    kpi2.metric("Pico MÁXIMO", f"{max_val:.1f} MW" if pd.notna(max_val) else "NaN", f"↑ Fecha y Hora: {hora_max}", delta_color=color_max)
+    kpi3.metric("Valle MÍNIMO", f"{min_val:.1f} MW" if pd.notna(min_val) else "NaN", f"↓ Fecha y Hora: {hora_min}", delta_color=color_min)
     st.markdown("---")
 
 # --- 3. INTERFAZ Y VISUALIZACIÓN ---
@@ -237,26 +241,22 @@ if st.sidebar.button("Procesar Rango COES", key="btn_procesar_rango_historico"):
                 "**Valores Extremos Detectados en el Periodo:**\n"
             )
             
-            if 'Reserva Fría' in df.columns and not df['Reserva Fría'].isna().all():
+            if not df['Reserva Fría'].isna().all():
                 texto_resumen += f"- **Reserva Fría**: Máximo {df['Reserva Fría'].max():.1f} MW | Mínimo {df['Reserva Fría'].min():.1f} MW\n"
-            if 'Reserva Eficiente' in df.columns and not df['Reserva Eficiente'].isna().all():
+            if not df['Reserva Eficiente'].isna().all():
                 texto_resumen += f"- **Reserva Eficiente**: Máximo {df['Reserva Eficiente'].max():.1f} MW | Mínimo {df['Reserva Eficiente'].min():.1f} MW\n"
-            if 'Mantenimiento' in df.columns and not df['Mantenimiento'].isna().all():
+            if not df['Mantenimiento'].isna().all():
                 texto_resumen += f"- **Mantenimiento**: Máximo {df['Mantenimiento'].max():.1f} MW | Mínimo {df['Mantenimiento'].min():.1f} MW\n"
                 
             st.info(texto_resumen)
             
             # --- ALERTA DE DÍAS SIN RESERVA EFICIENTE ---
             dias_sin_eficiente = []
-            if 'Reserva Eficiente' not in df.columns:
-                dias_sin_eficiente = df['Fecha_Hora'].dt.strftime('%d/%m/%Y').unique()
-            else:
-                for date_str, group in df.groupby(df['Fecha_Hora'].dt.strftime('%d/%m/%Y')):
-                    if group['Reserva Eficiente'].isna().all():
-                        dias_sin_eficiente.append(date_str)
+            for date_str, group in df.groupby(df['Fecha_Hora'].dt.strftime('%d/%m/%Y')):
+                if group['Reserva Eficiente'].isna().all():
+                    dias_sin_eficiente.append(date_str)
                         
             if len(dias_sin_eficiente) > 0:
-                # Se mantiene el resaltado visual, pero el desplegable ahora está contraído por defecto (expanded=False)
                 st.error("🔴 **ATENCIÓN: Se detectaron vacíos de información en la matriz extraída.**")
                 with st.expander("🚨 Alerta de Información no encontrada: Días sin reporte de Reserva Eficiente", expanded=False):
                     for dia in dias_sin_eficiente:
@@ -265,23 +265,17 @@ if st.sidebar.button("Procesar Rango COES", key="btn_procesar_rango_historico"):
             # --- 3.2 KPIs Críticos Dinámicos ---
             st.markdown("### 📊 Indicadores de Potencia de Reserva")
             
-            if 'Reserva Fría' in df.columns:
-                generar_fila_kpis(df, 'Reserva Fría')
-            if 'Reserva Eficiente' in df.columns:
-                generar_fila_kpis(df, 'Reserva Eficiente')
-            if 'Mantenimiento' in df.columns:
-                generar_fila_kpis(df, 'Mantenimiento')
+            generar_fila_kpis(df, 'Reserva Fría', color_alerta_inversa=False)
+            generar_fila_kpis(df, 'Reserva Eficiente', color_alerta_inversa=False)
+            generar_fila_kpis(df, 'Mantenimiento', color_alerta_inversa=True)
             
-            # --- 3.3 Gráfica de Tendencias Avanzada ---
+            # --- 3.3 Gráfica de Tendencias COMBINADA ---
             st.markdown("### 📈 Tendencias Operativas y Desviaciones en el Intervalo")
             
             fig = go.Figure()
-            if 'Reserva Fría' in df.columns:
-                trazar_tendencia_con_estadisticas(fig, df, 'Reserva Fría', '#1f77b4')
-            if 'Reserva Eficiente' in df.columns:
-                trazar_tendencia_con_estadisticas(fig, df, 'Reserva Eficiente', '#2ca02c')
-            if 'Mantenimiento' in df.columns:
-                trazar_tendencia_con_estadisticas(fig, df, 'Mantenimiento', '#d62728')
+            trazar_tendencia_con_estadisticas(fig, df, 'Reserva Fría', '#1f77b4')
+            trazar_tendencia_con_estadisticas(fig, df, 'Reserva Eficiente', '#2ca02c')
+            trazar_tendencia_con_estadisticas(fig, df, 'Mantenimiento', '#d62728')
             
             fig.update_layout(
                 xaxis_title="Fecha y Hora de Operación",
@@ -291,8 +285,23 @@ if st.sidebar.button("Procesar Rango COES", key="btn_procesar_rango_historico"):
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
             )
             st.plotly_chart(fig, use_container_width=True)
+
+            # --- 3.4 Gráfica de Tendencias EXCLUSIVA PARA RESERVA EFICIENTE ---
+            st.markdown("### 📈 Tendencia Operativa: Solo Reserva Eficiente")
             
-            # --- 3.4 Auditoría de Rango ---
+            fig_efi = go.Figure()
+            trazar_tendencia_con_estadisticas(fig_efi, df, 'Reserva Eficiente', '#2ca02c')
+            
+            fig_efi.update_layout(
+                xaxis_title="Fecha y Hora de Operación",
+                yaxis_title="Potencia (MW)",
+                hovermode="x unified",
+                height=500,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_efi, use_container_width=True)
+            
+            # --- 3.5 Auditoría de Rango ---
             st.markdown("### 🗄️ Trazabilidad de Datos")
             df_mostrar = df.copy()
             df_mostrar['Fecha_Hora'] = df_mostrar['Fecha_Hora'].dt.strftime('%d/%m/%Y %H:%M')

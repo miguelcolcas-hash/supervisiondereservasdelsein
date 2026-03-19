@@ -439,15 +439,23 @@ if 'df_maestro' in st.session_state and 'datos_yupana' in st.session_state:
     st.markdown("### 🎛️ Filtros de Fiscalización Dinámicos")
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    sel_empresa = col1.multiselect("Concesionaria:", sorted(df['Empresa'].unique()) if not df.empty else [])
-    sel_central = col2.multiselect("Central/Ubicación:", sorted(df['Central/Ubicacion'].unique()) if not df.empty else [])
-    sel_sector = col3.multiselect("Sector:", sorted(df['Sector'].unique()) if not df.empty else [], default=['GENERACIÓN'] if 'GENERACIÓN' in (df['Sector'].values if not df.empty else []) else [])
-    
-    opciones_estado = sorted(df['Disponibilidad_Equipo'].unique()) if not df.empty else []
+    def get_unique_safe(df_safe, col_name):
+        if not df_safe.empty and col_name in df_safe.columns:
+            return sorted(df_safe[col_name].dropna().unique())
+        return []
+
+    opciones_empresa = get_unique_safe(df, 'Empresa')
+    opciones_central = get_unique_safe(df, 'Central/Ubicacion')
+    opciones_sector = get_unique_safe(df, 'Sector')
+    opciones_estado = get_unique_safe(df, 'Disponibilidad_Equipo')
+    opciones_tipo = get_unique_safe(df, 'Tipo_Mantenimiento')
+
+    sel_empresa = col1.multiselect("Concesionaria:", opciones_empresa, default=[])
+    sel_central = col2.multiselect("Central/Ubicación:", opciones_central, default=[])
+    sel_sector = col3.multiselect("Sector:", opciones_sector, default=['GENERACIÓN'] if 'GENERACIÓN' in opciones_sector else [])
     default_estado = ['F/S'] if 'F/S' in opciones_estado else []
     sel_estado = col4.multiselect("Disponibilidad (E/S - F/S):", opciones_estado, default=default_estado)
-    
-    sel_tipo = col5.multiselect("Tipo de Mantenimiento:", sorted(df['Tipo_Mantenimiento'].unique()) if not df.empty else [])
+    sel_tipo = col5.multiselect("Tipo de Mantenimiento:", opciones_tipo, default=[])
     
     df_filtrado = df.copy()
     if not df_filtrado.empty:
@@ -458,11 +466,15 @@ if 'df_maestro' in st.session_state and 'datos_yupana' in st.session_state:
         if sel_tipo: df_filtrado = df_filtrado[df_filtrado['Tipo_Mantenimiento'].isin(sel_tipo)]
         
         df_historico_pot = cargar_potencias_guardadas()
-        df_filtrado = pd.merge(df_filtrado, df_historico_pot[['Central/Ubicacion', 'Equipo', 'Potencia_Indisponible_MW']], on=['Central/Ubicacion', 'Equipo'], how='left')
-        df_filtrado['MW_Efectivos'] = df_filtrado['Potencia_Indisponible_MW'].fillna(df_filtrado['MW_Indisponibles']).fillna(0.0)
+        if 'Central/Ubicacion' in df_filtrado.columns and 'Equipo' in df_filtrado.columns:
+            df_filtrado = pd.merge(df_filtrado, df_historico_pot[['Central/Ubicacion', 'Equipo', 'Potencia_Indisponible_MW']], on=['Central/Ubicacion', 'Equipo'], how='left')
+            df_filtrado['MW_Efectivos'] = df_filtrado['Potencia_Indisponible_MW'].fillna(df_filtrado['MW_Indisponibles']).fillna(0.0)
 
-    # Base Global de F/S de la Consulta
-    df_gen_fs = df_filtrado[(df_filtrado['Sector'] == 'GENERACIÓN') & (df_filtrado['Disponibilidad_Equipo'] == 'F/S')].copy()
+    # Base Global de F/S segura
+    if not df_filtrado.empty and 'Sector' in df_filtrado.columns and 'Disponibilidad_Equipo' in df_filtrado.columns:
+        df_gen_fs = df_filtrado[(df_filtrado['Sector'] == 'GENERACIÓN') & (df_filtrado['Disponibilidad_Equipo'] == 'F/S')].copy()
+    else:
+        df_gen_fs = pd.DataFrame()
 
     st.markdown("---")
     
@@ -488,7 +500,6 @@ if 'df_maestro' in st.session_state and 'datos_yupana' in st.session_state:
                 "- **Fechas Manuales:** Introduce un inicio y fin (DD/MM/AAAA HH:mm) para forzar caídas de reserva no reportadas.\n"
                 "*Al finalizar, desplázate hacia abajo para analizar las curvas de Reserva y Despacho.*")
 
-        # Opciones Mantenimiento Único
         opciones_mant_gas = ["Ninguno"]
         opciones_mant_die = ["Ninguno"]
         if not df_gen_fs.empty:
@@ -571,7 +582,7 @@ if 'df_maestro' in st.session_state and 'datos_yupana' in st.session_state:
     # PESTAÑA 2: RESUMEN MANTENIMIENTOS
     # ---------------------------------------------------------
     with t_resumen_mant:
-        if not df_filtrado.empty:
+        if not df_filtrado.empty and 'MW_Efectivos' in df_filtrado.columns:
             pico_maximo_mw = 0.0
             if not df_gen_fs.empty:
                 df_fs = df_gen_fs.dropna(subset=['Inicio_DT', 'Fin_DT']).copy()
